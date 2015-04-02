@@ -28,15 +28,11 @@ import org.apache.curator.framework.api.CuratorWatcher;
 import org.apache.curator.framework.imps.CuratorFrameworkState;
 import org.apache.curator.utils.PathUtils;
 import org.apache.curator.utils.ZKPaths;
-import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
+
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -70,6 +66,8 @@ public class LockInternals
     };
 
     private volatile int    maxLeases;
+
+    private String notDeletedPath;
 
     static final byte[]             REVOKE_MESSAGE = "__REVOKE__".getBytes();
 
@@ -207,6 +205,13 @@ public class LockInternals
         String          ourPath = null;
         boolean         hasTheLock = false;
         boolean         isDone = false;
+
+        // delete the node that was not deleted due to connection problem and not deleted by zookeeper(same session)
+        if (notDeletedPath != null){
+            deleteOurPath(notDeletedPath);
+            notDeletedPath = null;
+        }
+
         while ( !isDone )
         {
             isDone = true;
@@ -286,7 +291,7 @@ public class LockInternals
 
                     synchronized(this)
                     {
-                        try 
+                        try
                         {
                             // use getData() instead of exists() to avoid leaving unneeded watchers which is a type of resource leak
                             client.getData().usingWatcher(watcher).forPath(previousSequencePath);
@@ -307,7 +312,7 @@ public class LockInternals
                                 wait();
                             }
                         }
-                        catch ( KeeperException.NoNodeException e ) 
+                        catch ( KeeperException.NoNodeException e )
                         {
                             // it has been deleted (i.e. lock released). Try to acquire again
                         }
@@ -339,6 +344,13 @@ public class LockInternals
         catch ( KeeperException.NoNodeException e )
         {
             // ignore - already deleted (possibly expired session, etc.)
+            if (ourPath.equals(notDeletedPath)){
+                notDeletedPath = null;
+            }
+        }
+        catch (Exception e){
+            notDeletedPath = ourPath;
+            throw e;
         }
     }
 
